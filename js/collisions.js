@@ -1,6 +1,7 @@
 export function ReadMe() {
   console.log("Functions:");
   console.log("ResolveCircleCollision(c1, c2, dist, dx, dy)");
+  console.log("ResolveStaticCircleVsCircleCollision(solid, moving, dist, dx, dy)");
   console.log("ResolveSquadreCollision(movingObj, solidObj, pushRatio = 0.5)");
   console.log("CheckSquareCollision(obj1, obj2)");
   console.log("CheckCircleSquareCollision(circle, square)");
@@ -8,57 +9,105 @@ export function ReadMe() {
 }
 
 export function ResolveCircleCollision(c1, c2, dist, dx, dy) {
-  // 1. Calculate Normal Vector (the exact angle of the impact)
+  // Grab masses, defaulting to 1 to prevent NaN errors
+  const m1 = c1.mass || 1;
+  const m2 = c2.mass || 1;
+  const totalMass = m1 + m2;
+
+  // 1. Calculate Normal and Tangent Vectors
   const nx = dx / dist;
   const ny = dy / dist;
+  const tx = -ny;
+  const ty = nx;
 
-  // 2. Separate overlapping circles (prevents them from getting stuck)
+  // 2. Separate overlapping circles based on mass
   const overlap = c1.radius + c2.radius - dist;
-  const halfOverlap = overlap / 2;
+  const moveRatio1 = m2 / totalMass;
+  const moveRatio2 = m1 / totalMass;
 
-  c1.x += nx * halfOverlap;
-  c1.y += ny * halfOverlap;
-  c2.x -= nx * halfOverlap;
-  c2.y -= ny * halfOverlap;
+  c1.x += nx * (overlap * moveRatio1);
+  c1.y += ny * (overlap * moveRatio1);
+  c2.x -= nx * (overlap * moveRatio2);
+  c2.y -= ny * (overlap * moveRatio2);
 
-  // 3. Reconstruct their actual Velocity Vectors using your speed and push directions
+  // 3. Extract purely BASE SPEED vectors
   const v1x = c1.pushX * c1.speed;
   const v1y = c1.pushY * c1.speed;
   const v2x = c2.pushX * c2.speed;
   const v2y = c2.pushY * c2.speed;
 
-  // 4. Calculate Tangent Vector (perpendicular to the impact, representing the "sliding" motion)
-  const tx = -ny;
-  const ty = nx;
+  // 4. Extract purely FORCE vectors
+  const f1x = c1.pushX * (c1.force || 0);
+  const f1y = c1.pushY * (c1.force || 0);
+  const f2x = c2.pushX * (c2.force || 0);
+  const f2y = c2.pushY * (c2.force || 0);
 
-  // 5. Project the velocities onto the Normal and Tangent lines using the Dot Product
-  // This splits the movement into "direct impact" and "sliding past"
-  const dpNorm1 = v1x * nx + v1y * ny;
-  const dpTan1 = v1x * tx + v1y * ty;
-  const dpNorm2 = v2x * nx + v2y * ny;
-  const dpTan2 = v2x * tx + v2y * ty;
+  // --- SOLVE PARALLEL UNIVERSE A: SPEED ---
+  const v_dpNorm1 = v1x * nx + v1y * ny;
+  const v_dpTan1 = v1x * tx + v1y * ty;
+  const v_dpNorm2 = v2x * nx + v2y * ny;
+  const v_dpTan2 = v2x * tx + v2y * ty;
 
-  // 6. 1D Elastic Collision: Since masses are equal, they just swap their Normal velocities!
-  // (Tangential velocities remain unchanged because there's no friction here)
-  const finalNorm1 = dpNorm2;
-  const finalNorm2 = dpNorm1;
+  const v_finalNorm1 = (v_dpNorm1 * (m1 - m2) + 2 * m2 * v_dpNorm2) / totalMass;
+  const v_finalNorm2 = (v_dpNorm2 * (m2 - m1) + 2 * m1 * v_dpNorm1) / totalMass;
 
-  // 7. Reconstruct the final X and Y velocity vectors by combining the new Normal and old Tangent
-  const final_v1x = tx * dpTan1 + nx * finalNorm1;
-  const final_v1y = ty * dpTan1 + ny * finalNorm1;
-  const final_v2x = tx * dpTan2 + nx * finalNorm2;
-  const final_v2y = ty * dpTan2 + ny * finalNorm2;
+  const final_v1x = tx * v_dpTan1 + nx * v_finalNorm1;
+  const final_v1y = ty * v_dpTan1 + ny * v_finalNorm1;
+  const final_v2x = tx * v_dpTan2 + nx * v_finalNorm2;
+  const final_v2y = ty * v_dpTan2 + ny * v_finalNorm2;
 
-  // 8. Update their actual speed using the Pythagorean theorem
+  // --- SOLVE PARALLEL UNIVERSE B: FORCE ---
+  const f_dpNorm1 = f1x * nx + f1y * ny;
+  const f_dpTan1 = f1x * tx + f1y * ty;
+  const f_dpNorm2 = f2x * nx + f2y * ny;
+  const f_dpTan2 = f2x * tx + f2y * ty;
+
+  const f_finalNorm1 = (f_dpNorm1 * (m1 - m2) + 2 * m2 * f_dpNorm2) / totalMass;
+  const f_finalNorm2 = (f_dpNorm2 * (m2 - m1) + 2 * m1 * f_dpNorm1) / totalMass;
+
+  const final_f1x = tx * f_dpTan1 + nx * f_finalNorm1;
+  const final_f1y = ty * f_dpTan1 + ny * f_finalNorm1;
+  const final_f2x = tx * f_dpTan2 + nx * f_finalNorm2;
+  const final_f2y = ty * f_dpTan2 + ny * f_finalNorm2;
+
+  // 5. Update their scalar variables independently
+  // Speed perfectly conserves kinetic energy; Force acts as a temporary pool.
   c1.speed = Math.sqrt(final_v1x * final_v1x + final_v1y * final_v1y);
+  c1.force = Math.sqrt(final_f1x * final_f1x + final_f1y * final_f1y);
+
   c2.speed = Math.sqrt(final_v2x * final_v2x + final_v2y * final_v2y);
+  c2.force = Math.sqrt(final_f2x * final_f2x + final_f2y * final_f2y);
 
-  // 9. Update their directional vectors (pushX/Y), protecting against division by zero
-  c1.pushX = c1.speed === 0 ? 0 : final_v1x / c1.speed;
-  c1.pushY = c1.speed === 0 ? 0 : final_v1y / c1.speed;
+  // 6. Recombine the resulting vectors mathematically to find the physical direction
+  const combined_v1x = final_v1x + final_f1x;
+  const combined_v1y = final_v1y + final_f1y;
+  const combined_mag1 = Math.sqrt(combined_v1x * combined_v1x + combined_v1y * combined_v1y);
 
-  c2.pushX = c2.speed === 0 ? 0 : final_v2x / c2.speed;
-  c2.pushY = c2.speed === 0 ? 0 : final_v2y / c2.speed;
+  const combined_v2x = final_v2x + final_f2x;
+  const combined_v2y = final_v2y + final_f2y;
+  const combined_mag2 = Math.sqrt(combined_v2x * combined_v2x + combined_v2y * combined_v2y);
+
+  // 7. Apply the new directions
+  c1.pushX = combined_mag1 === 0 ? 0 : combined_v1x / combined_mag1;
+  c1.pushY = combined_mag1 === 0 ? 0 : combined_v1y / combined_mag1;
+
+  c2.pushX = combined_mag2 === 0 ? 0 : combined_v2x / combined_mag2;
+  c2.pushY = combined_mag2 === 0 ? 0 : combined_v2y / combined_mag2;
+}
+
+export function ResolveStaticCircleVsCircleCollision(solid, moving, dist, dx, dy) {
+  const radians = Math.atan2(dy, dx);
+
+  const vectorX = Math.cos(radians);
+  const vectorY = Math.sin(radians);
+
+  const overlap = solid.radius + moving.radius - dist;
+
+  moving.x += vectorX * overlap;
+  moving.y += vectorY * overlap;
+
+  moving.pushX = vectorX;
+  moving.pushY = vectorY;
 }
 
 export function ResolveSquadreCollision(movingObj, solidObj, pushRatio = 0.5) {
